@@ -1,7 +1,5 @@
-sklearn
+scikit-learn
 pandas
 numpy
-spacy
-heapq
-
-
+gensim
+nltk

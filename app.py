@@ -1,102 +1,105 @@
-import spacy
+import nltk
 import re
 import math
 import pandas as pd
 import numpy as np
-from spacy.lang.en.stop_words import STOP_WORDS
-from string import punctuation
-nlp = spacy.load("en_core_web_sm")
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize, sent_tokenize
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.model_selection import train_test_split
-from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import GradientBoostingClassifier
 from heapq import nlargest
-import string
-from definations import *
+from gensim.models import Word2Vec
+from definations import *  # assuming you still use sentence_score() and word_freq_counter()
 
+nltk.download('punkt')
+nltk.download('stopwords')
 
-#********************************************************************Input*********************************************************************************
-# Choice menu and choice and text input from user
+# ********************************************************************Input*********************************************************************************
+def intro():
+    print("""\n\n**********************************************Choice Menu************************************************
+        *************************************Text summarizer and cyber bullying detection*************************************
+        1. Check the summary of the Text Input
+        2. Check whether the Language was Offensive or not
+    \n\n """)
+
 intro()
-choice = int(input("Enter choice 1 or 2"))
+choice = int(input("Enter choice 1 or 2: "))
+test_data = input("Enter the text: ")
 
-test_data = input("Enter the text")
+# ************************************************************Offensiveness and sentiment analysis***********************************************************
+stopword = set(stopwords.words('english'))
 
-
-#************************************************************Offensiveness and sentiment analysis***********************************************************
-# Intializing stopwords and punctuation
-stopword =list(STOP_WORDS)
-punctuation = punctuation + '\n'
-
-# Read csv file from system and creating dataframe and labelling it.
-df = pd.read_csv("twitter_data.csv")
-df['labels'] = df['class'].map({0 : "Hate Speech Detected" , 1: "Offensive language Detected" , 2: "No hate and offesive speech" })
+# Read and label data
+df = pd.read_csv("Cyberbullying-Detection-and-Summarization\twitter data.csv")
+df['labels'] = df['class'].map({0: "Hate Speech Detected", 1: "Offensive language Detected", 2: "No hate and offensive speech"})
 df = df[['tweet', 'labels']]
 
-
-# applying cleaning to the text
-#Cleaning the data
+# Clean the text
 def clean(text):
     text = str(text).lower()
-    text = re.sub('\[.*?\]','',text)
-    text = re.sub('https?://S+|www\.\S+','',text)
-    text = re.sub('[%s]'% re.escape(string.punctuation),'',text)
-    text = re.sub('\n','',text)
-    text = re.sub('\w*\d\w*','', text)
-    text = [word for word in text.split(' ') if word not in stopword]
-    text = " ".join(text)
-    return text
+    text = re.sub(r'\[.*?\]', '', text)
+    text = re.sub(r'https?://\S+|www\.\S+', '', text)
+    text = re.sub(r'[%s]' % re.escape(string.punctuation), '', text)
+    text = re.sub(r'\n', '', text)
+    text = re.sub(r'\w*\d\w*', '', text)
+    words = [word for word in word_tokenize(text) if word not in stopword]
+    return " ".join(words)
 
 df["tweet"] = df["tweet"].apply(clean)
 
-
-# creating x and y
 x = np.array(df["tweet"])
 y = np.array(df["labels"])
 
-
-# Fit and train the model using tweet data
+# Train model
 cv = CountVectorizer()
 x = cv.fit_transform(x)
-x_train,x_test,y_train,y_test = train_test_split(x , y , test_size=.33 , random_state= 42)
-clf = DecisionTreeClassifier()
-clf.fit(x_train,y_train)
+x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.33, random_state=42)
+clf = GradientBoostingClassifier()
+clf.fit(x_train, y_train)
 
+# ***********************************************************************Text summarizer***************************************************************************
 
+# Clean and tokenize input
+cleaned_text = clean(test_data)
+sentences = sent_tokenize(test_data)
+words = word_tokenize(cleaned_text)
 
-#***********************************************************************Text summarizer***************************************************************************
-doc = nlp(test_data)
-tokens = [token.text for token in doc]
+# Train a small Word2Vec model on the input if no pretrained model is loaded
+w2v_model = Word2Vec([word_tokenize(s) for s in sentences], vector_size=100, window=5, min_count=1, workers=2)
 
-# Text cleaning providing word frequency counter
-word_freq = {}
-stop_words = list(STOP_WORDS)
-word_freq = word_freq_counter(doc , word_freq)
+# Word frequency using pretrained Word2Vec model
+def word_freq_counter_w2v(words, model):
+    word_freq = {}
+    for word in words:
+        if word in model.wv:
+            word_freq[word] = np.linalg.norm(model.wv[word])
+    return word_freq
 
-#Normalizing the word counter 
-max_freq = max(word_freq.values())
-for word in word_freq.keys():
-    word_freq[word] = word_freq[word] / max_freq
-  
-# sentence tokenizer
-sent_token = [sent for sent in doc.sents]
+word_freq = word_freq_counter_w2v(words, w2v_model)
+
+# Normalize frequency
+if word_freq:
+    max_freq = max(word_freq.values())
+    for word in word_freq.keys():
+        word_freq[word] = word_freq[word] / max_freq
+
+# Sentence scoring using same helper
 sent_score = {}
-sent_score = sentence_score(sent_token , sent_score , word_freq)
+sent_score = sentence_score(sentences, sent_score, word_freq)
 
+# **************************************************************************Output************************************************************************************
 
-
-#**************************************************************************Output************************************************************************************
-
-# selecting 30% sentence with max score and summarizing it
-if choice==1:
-    num_lines = math.ceil(len(sent_score) * .3)
-    summary = nlargest(n = num_lines, iterable = sent_score , key = sent_score.get)
+# Summarization
+if choice == 1:
+    num_lines = math.ceil(len(sent_score) * 0.3)
+    summary = nlargest(n=num_lines, iterable=sent_score, key=sent_score.get)
     print("\n\n Summary of the text is : \n\n")
-    print(summary)
+    for sent in summary:
+        print(sent)
 
-
-# Predicting the speech sentiments and offensiveness
-if choice==2:
-    df = cv.transform([test_data]).toarray()
-    print("\n\n sentiments/Offensiveness of the text is : \n\n")
-    print(clf.predict(df))
-            
+# Offensiveness detection
+elif choice == 2:
+    df_vec = cv.transform([cleaned_text]).toarray()
+    print("\n\n Sentiments/Offensiveness of the text is : \n\n")
+    print(clf.predict(df_vec))
